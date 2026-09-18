@@ -14,8 +14,11 @@ interface ToolbarProps {
   showDrift: boolean;
   showSilence: boolean;
   showReflow: boolean;
+  showShot: boolean;
   /** 音频波形是否就绪：静音吸附仅在波形就绪后可用 */
   canSilence: boolean;
+  /** 镜头切点检查仅在导入视频后可用 */
+  canShot: boolean;
   onImportSrt: (file: File) => void;
   onImportVideo: (file: File) => void;
   onLoadSample: () => void;
@@ -30,6 +33,7 @@ interface ToolbarProps {
   onToggleDrift: () => void;
   onToggleSilence: () => void;
   onToggleReflow: () => void;
+  onToggleShot: () => void;
 }
 
 export default function Toolbar(props: ToolbarProps) {
@@ -130,6 +134,18 @@ export default function Toolbar(props: ToolbarProps) {
           }
         >
           📏 断行重排
+        </button>
+        <button
+          className={`btn ${props.showShot ? 'primary' : ''}`}
+          disabled={!props.canShot}
+          onClick={props.onToggleShot}
+          title={
+            props.canShot
+              ? '打开镜头切点检查侧栏：按采样帧 RGB 直方图差检测切点并核对字幕冲突'
+              : '请先导入视频'
+          }
+        >
+          🎞️ 镜头切点检查
         </button>
       </div>
 

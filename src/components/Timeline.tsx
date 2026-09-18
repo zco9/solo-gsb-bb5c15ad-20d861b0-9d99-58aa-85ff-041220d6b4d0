@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { Subtitle } from '../types';
 import type { IssueType } from '../issues';
 import type { WaveformState } from '../useWaveform';
+import type { ShotCut } from '../shotcut';
 import { formatTimestamp } from '../srt';
 import WaveformLane from './WaveformLane';
 
@@ -25,6 +26,8 @@ interface TimelineProps {
   onDragCommit: (before: Subtitle[]) => void;
   /** 音频波形状态（idle 时不渲染波形轨道） */
   waveform: WaveformState;
+  /** 镜头切点（毫秒），在时间轴上以竖线标出 */
+  cuts?: ShotCut[];
   /** 关闭波形错误提示 */
   onDismissWaveform: () => void;
 }
@@ -195,6 +198,11 @@ export default function Timeline(props: TimelineProps) {
           <span className="legend-item">
             <i className="dot dot-short" /> 短于 500ms
           </span>
+          {props.cuts && props.cuts.length > 0 && (
+            <span className="legend-item">
+              <i className="dot dot-cut" /> 镜头切点（{props.cuts.length}）
+            </span>
+          )}
         </span>
         <span className="playhead-time">播放头 {formatTimestamp(currentTime * 1000)}</span>
       </div>
@@ -256,6 +264,15 @@ export default function Timeline(props: TimelineProps) {
             })}
             <div className="playhead" style={{ left: currentTime * pxPerSec }} />
           </div>
+
+          {props.cuts?.map((cut) => (
+            <div
+              key={cut.time}
+              className="cut-marker"
+              style={{ left: (cut.time / 1000) * pxPerSec }}
+              title={`镜头切点 ${formatTimestamp(cut.time)}（差值 ${cut.diff.toFixed(3)}）`}
+            />
+          ))}
         </div>
       </div>
     </div>

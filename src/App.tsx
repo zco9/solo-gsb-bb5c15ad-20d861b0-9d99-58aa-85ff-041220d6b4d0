@@ -17,8 +17,12 @@ import SilencePanel, { DEFAULT_SILENCE_FORM } from './components/SilencePanel';
 import type { SilenceForm } from './components/SilencePanel';
 import ReflowPanel, { DEFAULT_REFLOW_FORM, computeReflowPlan } from './components/ReflowPanel';
 import type { ReflowForm } from './components/ReflowPanel';
+import ShotCutPanel, { DEFAULT_SHOT_FORM } from './components/ShotCutPanel';
+import type { ShotForm } from './components/ShotCutPanel';
 import { applyReflow } from './reflow';
 import { applySilenceSnap, planSilenceSnap, resolveRange, parseSilenceParams } from './silence';
+import { parseShotParams } from './shotcut';
+import { useShotScan } from './useShotScan';
 import './styles.css';
 
 interface History {
@@ -46,17 +50,21 @@ export default function App() {
   const [showDrift, setShowDrift] = useState(false);
   const [showSilence, setShowSilence] = useState(false);
   const [showReflow, setShowReflow] = useState(false);
+  const [showShot, setShowShot] = useState(false);
   // 漂移校准表单（锚点选择 + 目标时间输入），面板关闭后保留，重新导入字幕时重置
   const [driftForm, setDriftForm] = useState<DriftForm>(EMPTY_DRIFT_FORM);
   // 静音吸附表单（连续区间 + 阈值等参数），面板关闭后保留，重新导入字幕时重置
   const [silenceForm, setSilenceForm] = useState<SilenceForm>(DEFAULT_SILENCE_FORM);
   // 断行重排表单（连续区间 + 每行最大字素数），面板关闭后保留，重新导入字幕时重置
   const [reflowForm, setReflowForm] = useState<ReflowForm>(DEFAULT_REFLOW_FORM);
+  // 镜头切点检查表单（采样间隔 / 阈值 / 最小间隔 / 边界容差），重新导入视频时重置
+  const [shotForm, setShotForm] = useState<ShotForm>(DEFAULT_SHOT_FORM);
   // 修订稿独立于当前字幕保存：导入不会替换当前时间轴
   const [revision, setRevision] = useState<Subtitle[]>([]);
   const [revisionName, setRevisionName] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const { waveform, loadWaveform, dismissWaveform } = useWaveform();
+  const { shot, startShot, cancelShot, resetShot } = useShotScan();
 
   const issues = useMemo(() => detectIssues(subs), [subs]);
 
@@ -226,8 +234,12 @@ export default function App() {
       // 浏览器内解码音轨生成波形；失败仅影响波形轨道，不影响字幕编辑。
       // 旧视频的波形数据随状态替换释放，不会累积在内存中。
       loadWaveform(file);
+      // 切点结果只对旧视频有效：重新导入视频时取消进行中的扫描、
+      // 清空切点并重置扫描参数
+      resetShot();
+      setShotForm(DEFAULT_SHOT_FORM);
     },
-    [loadWaveform]
+    [loadWaveform, resetShot]
   );
 
   const loadSample = useCallback(() => loadSrt(SAMPLE_SRT, '示例字幕.srt'), [loadSrt]);
@@ -251,6 +263,31 @@ export default function App() {
   const jumpTo = useCallback(
     (id: string, sec: number) => {
       setSelectedId(id);
+      seekTo(sec);
+    },
+    [seekTo]
+  );
+
+  // 修改任一扫描参数：旧切点结果对新参数失效，立即清空（不取消面板）
+  const changeShotForm = useCallback(
+    (form: ShotForm) => {
+      setShotForm(form);
+      if (shot.status !== 'idle') resetShot();
+    },
+    [shot.status, resetShot]
+  );
+
+  // 开始扫描前基于最新表单即时解析参数；扫描使用与播放分离的隐藏 video
+  const startShotScan = useCallback(() => {
+    const parsed = parseShotParams(shotForm);
+    if (!parsed.ok || !videoUrl) return;
+    void startShot(videoUrl, parsed.params);
+  }, [shotForm, videoUrl, startShot]);
+
+  // 切点冲突点击：跳转播放头，可选选中对应字幕（无冲突切点仅跳转）
+  const seekShot = useCallback(
+    (sec: number, subtitleId: string | null) => {
+      if (subtitleId) setSelectedId(subtitleId);
       seekTo(sec);
     },
     [seekTo]
@@ -312,7 +349,9 @@ export default function App() {
         showDrift={showDrift}
         showSilence={showSilence}
         showReflow={showReflow}
+        showShot={showShot}
         canSilence={waveformReady}
+        canShot={videoUrl !== ''}
         onImportSrt={importSrt}
         onImportVideo={importVideo}
         onLoadSample={loadSample}
@@ -329,12 +368,14 @@ export default function App() {
           setShowDrift(false);
           setShowSilence(false);
           setShowReflow(false);
+          setShowShot(false);
         }}
         onToggleDrift={() => {
           setShowDrift((v) => !v);
           setShowMerge(false);
           setShowSilence(false);
           setShowReflow(false);
+          setShowShot(false);
         }}
         onToggleSilence={() => {
           // 侧栏互斥；未就绪时按钮禁用，这里再兜底一次
@@ -343,12 +384,22 @@ export default function App() {
           setShowMerge(false);
           setShowDrift(false);
           setShowReflow(false);
+          setShowShot(false);
         }}
         onToggleReflow={() => {
           setShowReflow((v) => !v);
           setShowMerge(false);
           setShowDrift(false);
           setShowSilence(false);
+          setShowShot(false);
+        }}
+        onToggleShot={() => {
+          if (!videoUrl) return;
+          setShowShot((v) => !v);
+          setShowMerge(false);
+          setShowDrift(false);
+          setShowSilence(false);
+          setShowReflow(false);
         }}
       />
 
@@ -405,6 +456,19 @@ export default function App() {
               onApply={applyReflowSelection}
             />
           )}
+          {showShot && videoUrl && (
+            <ShotCutPanel
+              subs={subs}
+              videoName={videoName}
+              form={shotForm}
+              onFormChange={changeShotForm}
+              scan={shot}
+              selectedId={selectedId}
+              onSeek={seekShot}
+              onStart={startShotScan}
+              onCancel={cancelShot}
+            />
+          )}
         </section>
 
         <Timeline
@@ -417,6 +481,7 @@ export default function App() {
           selectedId={selectedId}
           follow={follow}
           waveform={waveform}
+          cuts={shot.status === 'done' ? shot.cuts : []}
           onSelect={setSelectedId}
           onSeek={seekTo}
           onLiveChange={liveChange}
