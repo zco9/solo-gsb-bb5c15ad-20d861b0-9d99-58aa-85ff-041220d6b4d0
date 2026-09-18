@@ -14,8 +14,11 @@ interface ToolbarProps {
   showDrift: boolean;
   showSilence: boolean;
   showReflow: boolean;
+  showCuts: boolean;
   /** 音频波形是否就绪：静音吸附仅在波形就绪后可用 */
   canSilence: boolean;
+  /** 是否已导入视频：切点检查仅在导入视频后可用 */
+  canCuts: boolean;
   onImportSrt: (file: File) => void;
   onImportVideo: (file: File) => void;
   onLoadSample: () => void;
@@ -30,6 +33,7 @@ interface ToolbarProps {
   onToggleDrift: () => void;
   onToggleSilence: () => void;
   onToggleReflow: () => void;
+  onToggleCuts: () => void;
 }
 
 export default function Toolbar(props: ToolbarProps) {
@@ -130,6 +134,18 @@ export default function Toolbar(props: ToolbarProps) {
           }
         >
           📏 断行重排
+        </button>
+        <button
+          className={`btn ${props.showCuts ? 'primary' : ''}`}
+          disabled={!props.canCuts}
+          onClick={props.onToggleCuts}
+          title={
+            props.canCuts
+              ? '打开镜头切点检查侧栏：检测画面切点并核对字幕边界'
+              : '请先导入视频'
+          }
+        >
+          ✂️ 切点检查
         </button>
       </div>
 

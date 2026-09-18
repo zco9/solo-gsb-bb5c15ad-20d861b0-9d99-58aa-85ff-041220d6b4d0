@@ -17,6 +17,10 @@ import SilencePanel, { DEFAULT_SILENCE_FORM } from './components/SilencePanel';
 import type { SilenceForm } from './components/SilencePanel';
 import ReflowPanel, { DEFAULT_REFLOW_FORM, computeReflowPlan } from './components/ReflowPanel';
 import type { ReflowForm } from './components/ReflowPanel';
+import SceneCutPanel, { DEFAULT_CUT_FORM } from './components/SceneCutPanel';
+import type { SceneCutForm } from './components/SceneCutPanel';
+import { useSceneCuts } from './useSceneCuts';
+import { findCutConflicts, parseSceneCutParams } from './scenecut';
 import { applyReflow } from './reflow';
 import { applySilenceSnap, planSilenceSnap, resolveRange, parseSilenceParams } from './silence';
 import './styles.css';
@@ -46,19 +50,36 @@ export default function App() {
   const [showDrift, setShowDrift] = useState(false);
   const [showSilence, setShowSilence] = useState(false);
   const [showReflow, setShowReflow] = useState(false);
+  const [showCuts, setShowCuts] = useState(false);
   // 漂移校准表单（锚点选择 + 目标时间输入），面板关闭后保留，重新导入字幕时重置
   const [driftForm, setDriftForm] = useState<DriftForm>(EMPTY_DRIFT_FORM);
   // 静音吸附表单（连续区间 + 阈值等参数），面板关闭后保留，重新导入字幕时重置
   const [silenceForm, setSilenceForm] = useState<SilenceForm>(DEFAULT_SILENCE_FORM);
   // 断行重排表单（连续区间 + 每行最大字素数），面板关闭后保留，重新导入字幕时重置
   const [reflowForm, setReflowForm] = useState<ReflowForm>(DEFAULT_REFLOW_FORM);
+  // 镜头切点表单（采样间隔 / 阈值 / 最小间隔 / 容差），面板关闭后保留；
+  // 与视频绑定，重新导入字幕不重置
+  const [cutForm, setCutForm] = useState<SceneCutForm>(DEFAULT_CUT_FORM);
+  // 当前视频文件：切点扫描用独立的隐藏 video 元素读取，不占用播放器
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   // 修订稿独立于当前字幕保存：导入不会替换当前时间轴
   const [revision, setRevision] = useState<Subtitle[]>([]);
   const [revisionName, setRevisionName] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const { waveform, loadWaveform, dismissWaveform } = useWaveform();
+  const { sceneCuts, startScan, stopScan } = useSceneCuts();
 
   const issues = useMemo(() => detectIssues(subs), [subs]);
+
+  // 切点参数解析与冲突核对都是只读计算：不写回字幕，撤销历史不受影响
+  const cutParams = useMemo(() => parseSceneCutParams(cutForm), [cutForm]);
+  const cutConflicts = useMemo(
+    () =>
+      sceneCuts.status === 'ready' && cutParams.ok
+        ? findCutConflicts(subs, sceneCuts.cuts, cutParams.params.toleranceMs)
+        : [],
+    [subs, sceneCuts, cutParams]
+  );
 
   const waveformReady = waveform.status === 'ready';
 
@@ -223,12 +244,30 @@ export default function App() {
         return URL.createObjectURL(file);
       });
       setVideoName(file.name);
+      setVideoFile(file);
+      // 换视频后旧切点结果失效，进行中的扫描一并取消
+      stopScan();
       // 浏览器内解码音轨生成波形；失败仅影响波形轨道，不影响字幕编辑。
       // 旧视频的波形数据随状态替换释放，不会累积在内存中。
       loadWaveform(file);
     },
-    [loadWaveform]
+    [loadWaveform, stopScan]
   );
+
+  // 修改切点参数后旧扫描结果失效，立即清空（时间轴上的切点标记一并移除）
+  const changeCutForm = useCallback(
+    (form: SceneCutForm) => {
+      setCutForm(form);
+      stopScan();
+    },
+    [stopScan]
+  );
+
+  // 开始切点扫描：分析在浏览器本地进行，只读视频与字幕，不产生历史记录
+  const startCutScan = useCallback(() => {
+    if (!videoFile || !cutParams.ok) return;
+    startScan(videoFile, cutParams.params);
+  }, [videoFile, cutParams, startScan]);
 
   const loadSample = useCallback(() => loadSrt(SAMPLE_SRT, '示例字幕.srt'), [loadSrt]);
 
@@ -312,7 +351,9 @@ export default function App() {
         showDrift={showDrift}
         showSilence={showSilence}
         showReflow={showReflow}
+        showCuts={showCuts}
         canSilence={waveformReady}
+        canCuts={videoFile !== null}
         onImportSrt={importSrt}
         onImportVideo={importVideo}
         onLoadSample={loadSample}
@@ -329,12 +370,14 @@ export default function App() {
           setShowDrift(false);
           setShowSilence(false);
           setShowReflow(false);
+          setShowCuts(false);
         }}
         onToggleDrift={() => {
           setShowDrift((v) => !v);
           setShowMerge(false);
           setShowSilence(false);
           setShowReflow(false);
+          setShowCuts(false);
         }}
         onToggleSilence={() => {
           // 侧栏互斥；未就绪时按钮禁用，这里再兜底一次
@@ -343,12 +386,21 @@ export default function App() {
           setShowMerge(false);
           setShowDrift(false);
           setShowReflow(false);
+          setShowCuts(false);
         }}
         onToggleReflow={() => {
           setShowReflow((v) => !v);
           setShowMerge(false);
           setShowDrift(false);
           setShowSilence(false);
+          setShowCuts(false);
+        }}
+        onToggleCuts={() => {
+          setShowCuts((v) => !v);
+          setShowMerge(false);
+          setShowDrift(false);
+          setShowSilence(false);
+          setShowReflow(false);
         }}
       />
 
@@ -359,7 +411,9 @@ export default function App() {
             name={videoName}
             videoRef={videoRef}
             onTimeUpdate={setCurrentTime}
-            onDuration={setVideoDuration}
+            // 部分录制文件（如 MediaRecorder 产物）元数据时长为 Infinity，
+            // 直接采用会让时间轴刻度循环失控，这里丢弃非有限时长
+            onDuration={(d) => setVideoDuration(Number.isFinite(d) ? d : 0)}
           />
           <IssuesPanel subs={subs} issues={issues} selectedId={selectedId} onJump={jumpTo} />
           {showMerge && (
@@ -405,6 +459,21 @@ export default function App() {
               onApply={applyReflowSelection}
             />
           )}
+          {showCuts && (
+            <SceneCutPanel
+              hasVideo={videoFile !== null}
+              hasSubs={subs.length > 0}
+              form={cutForm}
+              onFormChange={changeCutForm}
+              paramsError={cutParams.ok ? null : cutParams.error}
+              scan={sceneCuts}
+              conflicts={cutConflicts}
+              selectedId={selectedId}
+              onJump={jumpTo}
+              onStart={startCutScan}
+              onCancel={stopScan}
+            />
+          )}
         </section>
 
         <Timeline
@@ -417,6 +486,7 @@ export default function App() {
           selectedId={selectedId}
           follow={follow}
           waveform={waveform}
+          cuts={sceneCuts.cuts}
           onSelect={setSelectedId}
           onSeek={seekTo}
           onLiveChange={liveChange}

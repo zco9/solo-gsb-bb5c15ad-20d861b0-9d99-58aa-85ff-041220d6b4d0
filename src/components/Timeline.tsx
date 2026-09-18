@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { Subtitle } from '../types';
 import type { IssueType } from '../issues';
 import type { WaveformState } from '../useWaveform';
+import type { SceneCut } from '../scenecut';
 import { formatTimestamp } from '../srt';
 import WaveformLane from './WaveformLane';
 
@@ -27,6 +28,8 @@ interface TimelineProps {
   waveform: WaveformState;
   /** 关闭波形错误提示 */
   onDismissWaveform: () => void;
+  /** 镜头切点标记（毫秒），空数组时不渲染 */
+  cuts: SceneCut[];
 }
 
 type DragMode = 'move' | 'resize-l' | 'resize-r';
@@ -195,6 +198,11 @@ export default function Timeline(props: TimelineProps) {
           <span className="legend-item">
             <i className="dot dot-short" /> 短于 500ms
           </span>
+          {props.cuts.length > 0 && (
+            <span className="legend-item">
+              <i className="dot dot-cut" /> 镜头切点 {props.cuts.length}
+            </span>
+          )}
         </span>
         <span className="playhead-time">播放头 {formatTimestamp(currentTime * 1000)}</span>
       </div>
@@ -228,6 +236,14 @@ export default function Timeline(props: TimelineProps) {
             {subs.length === 0 && (
               <div className="track-empty">导入 SRT 或点击「加载示例」后，字幕块将显示在这里</div>
             )}
+            {props.cuts.map((c) => (
+              <div
+                key={c.time}
+                className="cut-marker"
+                style={{ left: (c.time / 1000) * pxPerSec }}
+                title={`镜头切点 ${formatTimestamp(c.time)} · 差值 ${c.diff.toFixed(3)}`}
+              />
+            ))}
             {subs.map((s) => {
               const iss = issues.get(s.id);
               const cls = ['sub-block'];
